@@ -345,7 +345,7 @@ func updateIntervalText() {
 }
 
 func updateInfoUI() {
-	if currentConfig.DefaultLayout == LayoutFan {
+	if currentConfig.DefaultLayout == LayoutFan || currentConfig.DefaultLayout == LayoutMemoryFused {
 		themeColor := "green"
 		if currentConfig.Theme != "" {
 			themeColor = currentConfig.Theme

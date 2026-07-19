@@ -29,9 +29,13 @@ const (
 	LayoutHistorySoC      = "history_soc"  // StepChart history: CPU, GPU, ANE, DRAM Bandwidth
 	LayoutFan             = "fan"          // Fan control and temperature sensors
 	LayoutGPUMemory       = "gpu_memory"   // GPU + Memory focused with memory bandwidth chart
+	
+	// Custom
+	LayoutMemoryFused = "memory_fused" // Memory + Fused metrics layout
+
 )
 
-var layoutOrder = []string{LayoutDefault, LayoutAlternative, LayoutAlternativeFull, LayoutVertical, LayoutCompact, LayoutDashboard, LayoutGaugesOnly, LayoutGPUFocus, LayoutCPUFocus, LayoutGPUMemory, LayoutNetworkIO, LayoutSmall, LayoutTiny, LayoutMicro, LayoutNano, LayoutPico, LayoutHistory, LayoutHistoryFull, LayoutHistorySoC, LayoutFan}
+var layoutOrder = []string{LayoutDefault, LayoutAlternative, LayoutAlternativeFull, LayoutVertical, LayoutCompact, LayoutDashboard, LayoutGaugesOnly, LayoutGPUFocus, LayoutCPUFocus, LayoutGPUMemory, LayoutNetworkIO, LayoutSmall, LayoutTiny, LayoutMicro, LayoutNano, LayoutPico, LayoutHistory, LayoutHistoryFull, LayoutHistorySoC, LayoutFan, LayoutInfo, LayoutMemoryFused}
 
 func setupGrid() {
 	totalLayouts = len(layoutOrder)
@@ -289,6 +293,32 @@ func setLayoutGrid(layoutName string) {
 		setHistoryLikeLayoutGrid(layoutName)
 	case LayoutHistorySoC:
 		setHistorySoCLayoutGrid()
+
+	case LayoutMemoryFused:
+		// Custom layout for Memory + Fused metrics
+		grid.Set(
+			ui.NewRow(0.45,
+				ui.NewCol(0.50, cpuCoreWidget),
+				ui.NewCol(0.50,
+					ui.NewRow(0.50, gpuGauge),
+					ui.NewRow(0.50, memoryGauge),
+				),
+			),
+			ui.NewRow(0.20,
+				ui.NewCol(1.0/6, modelText),
+				ui.NewCol(1.0/3, NetworkInfo),
+				ui.NewCol(1.0/4, PowerChart),
+				ui.NewCol(1.0/4, sparklineGroup),
+			),
+			ui.NewRow(0.27,
+				ui.NewCol(0.50, fanStatusPanel),
+				ui.NewCol(0.50, fanTempPanel),
+			),
+			ui.NewRow(0.08,
+				ui.NewCol(1.0, fanControlPanel),
+			),
+		)
+
 	default: // LayoutDefault
 		grid.Set(
 			ui.NewRow(1.0/4,
