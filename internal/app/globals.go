@@ -52,11 +52,15 @@ var (
 	// StepChart widgets for History layout
 	gpuHistoryChart, powerHistoryChart, memoryHistoryChart, cpuHistoryChart *w.StepChart
 	memBWHistoryChart                                                       *w.StepChart
+	memoryPressureHistoryChart                                              *w.StepChart
 	aneHistoryChart, bandwidthHistoryChart                                  *w.StepChart
 	socPowerHistoryChart                                                    *w.StepChart // Multi-line power for history_soc (CPU/GPU/ANE/DRAM)
 	ssdReadHistoryChart                                                     *w.StepChart // Combined SSD read bandwidth history (GB/s)
 	memoryUsedHistory                                                       = make([]float64, 100)
 	swapUsedHistory                                                         = make([]float64, 100)
+	memoryPressureHistory                                                   = make([]float64, 100)
+	memoryPressureGauge                                                     *w.Gauge
+	memoryPressurePanel                                                     *w.Paragraph
 	cpuUsageHistory                                                         = make([]float64, 100)
 	powerUsageHistory                                                       = make([]float64, 100)
 	memBWReadHistory                                                        = make([]float64, 100)
@@ -163,6 +167,7 @@ var (
 	netdiskMetricsChan      = make(chan NetDiskMetrics, 1)
 	tbNetStatsChan          = make(chan []ThunderboltNetStats, 1)
 	processMetricsChan      = make(chan []ProcessMetrics, 1)
+	portMetricsChan         = make(chan []PortMetrics, 1)
 	ticker                  *time.Ticker
 
 	cachedHostname      string
@@ -259,6 +264,20 @@ var (
 		[]string{"type"},
 	)
 
+	memoryPressureLevelGauge = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "mactop_memory_pressure_level",
+			Help: "Kernel memory pressure level (1=Normal, 2=Warning, 4=Critical)",
+		},
+	)
+
+	memoryPressureApproxGauge = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "mactop_memory_pressure_approx",
+			Help: "Approximate memory pressure score 0-100 derived from kernel level plus usage/swap/compression",
+		},
+	)
+
 	networkSpeed = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "mactop_network_kbytes_per_sec",
@@ -338,5 +357,25 @@ var (
 			Help: "System information (value is always 1, labels contain info)",
 		},
 		[]string{"model", "core_count", "e_core_count", "p_core_count", "s_core_count", "gpu_core_count"},
+	)
+
+	listeningPortsTotal = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "mactop_listening_ports_total",
+			Help: "Number of listening TCP/UDP ports visible without root",
+		},
+	)
+	listeningPortsExternal = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "mactop_listening_ports_external",
+			Help: "Number of listening ports bound beyond localhost",
+		},
+	)
+	listeningPortsByProto = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "mactop_listening_ports",
+			Help: "Listening ports by protocol",
+		},
+		[]string{"protocol"},
 	)
 )

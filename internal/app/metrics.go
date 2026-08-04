@@ -24,6 +24,8 @@ func startPrometheusServer(port string) {
 	registry.MustRegister(gpuTemp)
 	registry.MustRegister(thermalState)
 	registry.MustRegister(memoryUsage)
+	registry.MustRegister(memoryPressureLevelGauge)
+	registry.MustRegister(memoryPressureApproxGauge)
 	registry.MustRegister(networkSpeed)
 	registry.MustRegister(diskIOSpeed)
 	registry.MustRegister(diskIOPS)
@@ -37,6 +39,9 @@ func startPrometheusServer(port string) {
 	registry.MustRegister(systemInfoGauge)
 	registry.MustRegister(fanRPM)
 	registry.MustRegister(tempSensorGauge)
+	registry.MustRegister(listeningPortsTotal)
+	registry.MustRegister(listeningPortsExternal)
+	registry.MustRegister(listeningPortsByProto)
 
 	initializePrometheusSeries(getSOCInfo())
 
@@ -67,9 +72,11 @@ func initializePrometheusSeries(sysInfo SystemInfo) {
 	for _, component := range []string{"cpu", "gpu", "ane", "dram", "gpu_sram", "system", "total"} {
 		powerUsage.With(prometheus.Labels{"component": component}).Set(0)
 	}
-	for _, memoryType := range []string{"used", "total", "swap_used", "swap_total"} {
+	for _, memoryType := range []string{"used", "total", "swap_used", "swap_total", "compressed"} {
 		memoryUsage.With(prometheus.Labels{"type": memoryType}).Set(0)
 	}
+	memoryPressureLevelGauge.Set(0)
+	memoryPressureApproxGauge.Set(0)
 	for _, direction := range []string{"upload", "download"} {
 		networkSpeed.With(prometheus.Labels{"direction": direction}).Set(0)
 	}
@@ -380,6 +387,9 @@ func publishPrometheusMetrics(snapshot prometheusMetricsSnapshot) {
 	memoryUsage.With(prometheus.Labels{"type": "total"}).Set(float64(snapshot.Memory.Total) / 1024 / 1024 / 1024)
 	memoryUsage.With(prometheus.Labels{"type": "swap_used"}).Set(float64(snapshot.Memory.SwapUsed) / 1024 / 1024 / 1024)
 	memoryUsage.With(prometheus.Labels{"type": "swap_total"}).Set(float64(snapshot.Memory.SwapTotal) / 1024 / 1024 / 1024)
+	memoryUsage.With(prometheus.Labels{"type": "compressed"}).Set(float64(snapshot.Memory.Compressed) / 1024 / 1024 / 1024)
+	memoryPressureLevelGauge.Set(float64(snapshot.Memory.PressureLevel))
+	memoryPressureApproxGauge.Set(snapshot.Memory.PressureApprox)
 
 	for i, usage := range cpuMetrics.CoreUsages {
 		cpuCoreUsage.With(prometheus.Labels{"core": fmt.Sprintf("%d", i), "type": coreTypeForIndex(i, snapshot.SystemInfo)}).Set(usage)
@@ -673,7 +683,14 @@ func updatePrometheusSensors(fans []FanInfo, sensors []TempSensor) {
 	}
 }
 
-func collectProcessMetrics(done chan struct{}, processMetricsChan chan []ProcessMetrics, triggerChan chan struct{}) {
+func shouldCollectPorts() bool {
+	// Full FD/socket enumeration is O(processes × FDs). Only pay for it when
+	// the ports layout is active or Prometheus is exporting port gauges.
+	// Headless mode collects ports separately in collectHeadlessData.
+	return isPortsLayoutActive() || prometheusPort != ""
+}
+
+func collectProcessMetrics(done chan struct{}, processMetricsChan chan []ProcessMetrics, portMetricsChan chan []PortMetrics, triggerChan chan struct{}) {
 	for {
 		select {
 		case <-done:
@@ -688,8 +705,40 @@ func collectProcessMetrics(done chan struct{}, processMetricsChan chan []Process
 			} else {
 				stderrLogger.Printf("Error getting process list: %v\n", err)
 			}
+
+			if !shouldCollectPorts() {
+				continue
+			}
+			if ports, err := collectListeningPorts(); err == nil {
+				publishPrometheusPorts(ports)
+				select {
+				case portMetricsChan <- ports:
+				default:
+					select {
+					case <-portMetricsChan:
+					default:
+					}
+					select {
+					case portMetricsChan <- ports:
+					default:
+					}
+				}
+			} else {
+				stderrLogger.Printf("Error collecting listening ports: %v\n", err)
+			}
 		}
 	}
+}
+
+func publishPrometheusPorts(ports []PortMetrics) {
+	if prometheusPort == "" {
+		return
+	}
+	total, external, tcp, udp := portsSummary(ports)
+	listeningPortsTotal.Set(float64(total))
+	listeningPortsExternal.Set(float64(external))
+	listeningPortsByProto.With(prometheus.Labels{"protocol": "tcp"}).Set(float64(tcp))
+	listeningPortsByProto.With(prometheus.Labels{"protocol": "udp"}).Set(float64(udp))
 }
 
 func getMemoryMetrics() MemoryMetrics {
@@ -698,11 +747,16 @@ func getMemoryMetrics() MemoryMetrics {
 		stderrLogger.Printf("Error getting native memory metrics: %v\n", err)
 		return MemoryMetrics{}
 	}
+	level := native.PressureLevel
 	return MemoryMetrics{
-		Total:     native.Total,
-		Used:      native.Used,
-		Available: native.Available,
-		SwapTotal: native.SwapTotal,
-		SwapUsed:  native.SwapUsed,
+		Total:          native.Total,
+		Used:           native.Used,
+		Available:      native.Available,
+		SwapTotal:      native.SwapTotal,
+		SwapUsed:       native.SwapUsed,
+		Compressed:     native.Compressed,
+		PressureLevel:  level,
+		PressureState:  memoryPressureState(level),
+		PressureApprox: memoryPressureApprox(level, native.Used, native.Total, native.SwapUsed, native.Compressed),
 	}
 }
